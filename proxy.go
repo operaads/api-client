@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -52,6 +53,7 @@ func (c *Client) ProxyAPI(
 	}
 
 	var reqParseFunc func(*http.Request, *proxy.Options) (io.Reader, string, error)
+
 	switch requestType {
 	case ProxyRequestTypeRaw:
 		reqParseFunc = parseRawRequest
@@ -61,7 +63,7 @@ func (c *Client) ProxyAPI(
 		reqParseFunc = parseMultipartFormRequest
 	default:
 		reqParseFunc = func(req *http.Request, opt *proxy.Options) (io.Reader, string, error) {
-			return nil, req.Header.Get("Content-Type"), nil
+			return nil, "", nil
 		}
 	}
 
@@ -122,12 +124,13 @@ func (c *Client) ProxyAPI(
 		}
 	}
 
-	var resBody io.Reader
+	// write status code
+	writer.WriteHeader(res.StatusCode)
 
 	resContentEncoding := res.Header.Get("Content-Encoding")
 
 	if opt.ResponseJSONInterceptor != nil {
-		var m map[string]interface{}
+		var m interface{}
 
 		var reader io.Reader
 		switch resContentEncoding {
@@ -142,31 +145,38 @@ func (c *Client) ProxyAPI(
 		}
 
 		if err := json.NewDecoder(reader).Decode(&m); err != nil {
-			opt.ResponseJSONInterceptor(m)
 			return err
 		}
+
+		m = opt.ResponseJSONInterceptor(m)
 
 		buf := new(bytes.Buffer)
 		if err := json.NewEncoder(buf).Encode(m); err != nil {
 			return err
 		}
-		resBody = buf
 
 		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	} else {
-		resBody = res.Body
+		writer.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 
-		writer.Header().Set("Content-Type", res.Header.Get("Content-Type"))
-		if resContentEncoding != "" {
-			writer.Header().Set("Content-Encoding", resContentEncoding)
+		if _, err := writer.Write(buf.Bytes()); err != nil {
+			return err
 		}
+
+		return nil
 	}
 
-	// write status code
-	writer.WriteHeader(res.StatusCode)
+	writer.Header().Set("Content-Type", res.Header.Get("Content-Type"))
+
+	if resContentLength := res.Header.Get("Content-Length"); resContentLength != "" {
+		writer.Header().Set("Content-Length", resContentLength)
+	}
+
+	if resContentEncoding != "" {
+		writer.Header().Set("Content-Encoding", resContentEncoding)
+	}
 
 	// copy response
-	_, err = io.Copy(writer, resBody)
+	_, err = io.Copy(writer, res.Body)
 	return err
 }
 
@@ -213,20 +223,20 @@ func parseRawRequest(req *http.Request, opt *proxy.Options) (io.Reader, string, 
 	if opt.RequestJSONInterceptor != nil {
 		defer req.Body.Close()
 
-		var m map[string]interface{}
+		var m interface{}
 
 		if err := json.NewDecoder(req.Body).Decode(&m); err != nil {
 			return nil, "", err
 		}
 
-		opt.RequestJSONInterceptor(m)
+		m = opt.RequestJSONInterceptor(m)
 
 		buf := new(bytes.Buffer)
 		if err := json.NewEncoder(buf).Encode(m); err != nil {
 			return nil, "", err
 		}
 
-		return buf, "", nil
+		return buf, "application/json; charset=utf-8", nil
 	}
 
 	contentType := req.Header.Get("Content-Type")
@@ -250,7 +260,7 @@ func parseFormRequest(req *http.Request, opt *proxy.Options) (io.Reader, string,
 	}
 
 	if opt.RequestFormInterceptor != nil {
-		opt.RequestFormInterceptor(form)
+		form = opt.RequestFormInterceptor(form)
 	}
 
 	contentType := req.Header.Get("Content-Type")
