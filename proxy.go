@@ -2,6 +2,7 @@ package api_client
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"github.com/operaads/api-client/proxy"
 	"github.com/operaads/api-client/request"
@@ -121,12 +122,26 @@ func (c *Client) ProxyAPI(
 		}
 	}
 
-	var resBody io.Reader = res.Body
+	var resBody io.Reader
+
+	resContentEncoding := res.Header.Get("Content-Encoding")
 
 	if opt.ResponseJSONInterceptor != nil {
 		var m map[string]interface{}
 
-		if err := json.NewDecoder(res.Body).Decode(&m); err != nil {
+		var reader io.Reader
+		switch resContentEncoding {
+		case "gzip":
+			if gzReader, err := gzip.NewReader(res.Body); err != nil {
+				return err
+			} else {
+				reader = gzReader
+			}
+		default:
+			reader = res.Body
+		}
+
+		if err := json.NewDecoder(reader).Decode(&m); err != nil {
 			opt.ResponseJSONInterceptor(m)
 			return err
 		}
@@ -139,10 +154,9 @@ func (c *Client) ProxyAPI(
 
 		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	} else {
-		resContentType := res.Header.Get("Content-Type")
-		resContentEncoding := res.Header.Get("Content-Encoding")
+		resBody = res.Body
 
-		writer.Header().Set("Content-Type", resContentType)
+		writer.Header().Set("Content-Type", res.Header.Get("Content-Type"))
 		if resContentEncoding != "" {
 			writer.Header().Set("Content-Encoding", resContentEncoding)
 		}
