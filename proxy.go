@@ -43,7 +43,8 @@ func (c *Client) ProxyAPI(
 	}
 
 	opt := &proxy.Options{
-		RequestTimeout: c.Timeout,
+		RequestTimeout:          c.Timeout,
+		TransferResponseHeaders: []string{"Content-Type", "Content-Length"},
 	}
 
 	for _, o := range opts {
@@ -71,7 +72,11 @@ func (c *Client) ProxyAPI(
 
 	requestOptions := []request.Option{
 		request.WithRequestInterceptors(func(r *http.Request) {
-			copyHeaders(httpReq.Header, r.Header)
+			for k, vv := range httpReq.Header {
+				for _, v := range vv {
+					r.Header.Add(k, v)
+				}
+			}
 
 			if reqContentType != "" {
 				r.Header.Set("Content-Type", reqContentType)
@@ -124,7 +129,17 @@ func (c *Client) ProxyAPI(
 
 	// write status code
 	writer.WriteHeader(res.StatusCode)
-	copyHeaders(res.Header, writer.Header())
+
+	for k, vv := range res.Header {
+		for _, h := range opt.TransferResponseHeaders {
+			if k == h {
+				for _, v := range vv {
+					writer.Header().Add(k, v)
+				}
+				break
+			}
+		}
+	}
 
 	// copy response
 	_, err = io.Copy(writer, resBody)
@@ -168,14 +183,6 @@ func (c *Client) ProxyMultipartFormAPI(
 
 func (c *Client) TransparentProxyMultipartFormAPI(httpReq *http.Request, writer http.ResponseWriter) error {
 	return c.ProxyAPI("", "", httpReq, writer, ProxyRequestTypeMultipartForm)
-}
-
-func copyHeaders(src, dst http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
 }
 
 func parseRawRequest(req *http.Request, opt *proxy.Options) (io.Reader, string, error) {

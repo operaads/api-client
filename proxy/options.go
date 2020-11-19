@@ -17,8 +17,7 @@ type Options struct {
 	RequestMultipartFormInterceptor interceptor.MultipartFormInterceptor
 
 	ResponseJSONInterceptor interceptor.JSONInterceptor
-
-	ErrorInterceptor interceptor.ErrorInterceptor
+	TransferResponseHeaders []string
 }
 
 type Option func(*Options)
@@ -71,8 +70,22 @@ func WithResponseJSONInterceptor(intcp interceptor.JSONInterceptor) Option {
 	}
 }
 
-func WithErrorInterceptor(intcp interceptor.ErrorInterceptor) Option {
+func WithTransferResponseHeaders(headers ...string) Option {
 	return func(o *Options) {
-		o.ErrorInterceptor = intcp
+		o.TransferResponseHeaders = make([]string, len(headers))
+
+		copy(o.TransferResponseHeaders, headers)
+	}
+}
+
+func AppendTransferResponseHeaders(headers ...string) Option {
+	return func(o *Options) {
+		if o.TransferResponseHeaders == nil {
+			o.TransferResponseHeaders = make([]string, len(headers))
+
+			copy(o.TransferResponseHeaders, headers)
+		} else {
+			o.TransferResponseHeaders = append(o.TransferResponseHeaders, headers...)
+		}
 	}
 }
