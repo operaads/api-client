@@ -43,8 +43,7 @@ func (c *Client) ProxyAPI(
 	}
 
 	opt := &proxy.Options{
-		RequestTimeout:          c.Timeout,
-		TransferResponseHeaders: []string{"Content-Type", "Content-Length"},
+		RequestTimeout: c.Timeout,
 	}
 
 	for _, o := range opts {
@@ -110,6 +109,18 @@ func (c *Client) ProxyAPI(
 
 	defer res.Body.Close()
 
+	// transfer response headers
+	for k, vv := range res.Header {
+		for _, h := range opt.TransferResponseHeaders {
+			if k == h {
+				for _, v := range vv {
+					writer.Header().Add(k, v)
+				}
+				break
+			}
+		}
+	}
+
 	var resBody io.Reader = res.Body
 
 	if opt.ResponseJSONInterceptor != nil {
@@ -125,21 +136,20 @@ func (c *Client) ProxyAPI(
 			return err
 		}
 		resBody = buf
+
+		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	} else {
+		resContentType := res.Header.Get("Content-Type")
+		resContentEncoding := res.Header.Get("Content-Encoding")
+
+		writer.Header().Set("Content-Type", resContentType)
+		if resContentEncoding != "" {
+			writer.Header().Set("Content-Encoding", resContentEncoding)
+		}
 	}
 
 	// write status code
 	writer.WriteHeader(res.StatusCode)
-
-	for k, vv := range res.Header {
-		for _, h := range opt.TransferResponseHeaders {
-			if k == h {
-				for _, v := range vv {
-					writer.Header().Add(k, v)
-				}
-				break
-			}
-		}
-	}
 
 	// copy response
 	_, err = io.Copy(writer, resBody)
