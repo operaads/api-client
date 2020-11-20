@@ -102,6 +102,22 @@ func (c *Client) ProxyAPI(
 		return err
 	}
 
+	if res.StatusCode == http.StatusNoContent {
+		resWriter.WriteHeader(http.StatusNoContent)
+
+		// transfer response headers
+		for _, h := range opt.TransferResponseHeaders {
+			if vv := res.Header.Values(h); vv != nil {
+				headerValue := make([]string, len(vv))
+				copy(headerValue, vv)
+
+				resWriter.Header()[h] = headerValue
+			}
+		}
+
+		return nil
+	}
+
 	defer res.Body.Close()
 
 	resHeaders := make(http.Header)
@@ -115,9 +131,10 @@ func (c *Client) ProxyAPI(
 		}
 	}
 
-	resContentEncoding := res.Header.Get("Content-Encoding")
 
 	var resBody io.Reader
+
+	resContentEncoding := res.Header.Get("Content-Encoding")
 
 	if opt.ResponseJSONInterceptor != nil {
 		var obj interface{}
