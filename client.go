@@ -2,14 +2,15 @@ package api_client
 
 import (
 	"context"
-	"github.com/operaads/api-client/interceptor"
-	"github.com/operaads/api-client/request"
-	"github.com/operaads/api-client/response"
-	"golang.org/x/oauth2/jwt"
 	"net/http"
 	"net/url"
 	"path"
 	"time"
+
+	"github.com/operaads/api-client/interceptor"
+	"github.com/operaads/api-client/request"
+	"github.com/operaads/api-client/response"
+	"golang.org/x/oauth2/jwt"
 )
 
 type Client struct {

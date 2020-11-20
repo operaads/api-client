@@ -4,30 +4,22 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
-	"github.com/operaads/api-client/proxy"
-	"github.com/operaads/api-client/request"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-)
 
-type ProxyRequestType string
-
-const (
-	ProxyRequestTypeNone          = ProxyRequestType("")
-	ProxyRequestTypeRaw           = ProxyRequestType("RAW")
-	ProxyRequestTypeForm          = ProxyRequestType("FORM")
-	ProxyRequestTypeMultipartForm = ProxyRequestType("MULTIPART_FORM")
+	"github.com/operaads/api-client/proxy"
+	"github.com/operaads/api-client/request"
 )
 
 func (c *Client) ProxyAPI(
 	method, path string,
 	httpReq *http.Request,
-	writer http.ResponseWriter,
-	requestType ProxyRequestType,
+	resWriter http.ResponseWriter,
+	reqBodyType proxy.RequestBodyType,
 	opts ...proxy.Option,
 ) error {
 	if path == "" {
@@ -54,12 +46,12 @@ func (c *Client) ProxyAPI(
 
 	var reqParseFunc func(*http.Request, *proxy.Options) (io.Reader, string, error)
 
-	switch requestType {
-	case ProxyRequestTypeRaw:
+	switch reqBodyType {
+	case proxy.RequestBodyTypeRaw:
 		reqParseFunc = parseRawRequest
-	case ProxyRequestTypeForm:
+	case proxy.RequestBodyTypeForm:
 		reqParseFunc = parseFormRequest
-	case ProxyRequestTypeMultipartForm:
+	case proxy.RequestBodyTypeMultipartForm:
 		reqParseFunc = parseMultipartFormRequest
 	default:
 		reqParseFunc = func(req *http.Request, opt *proxy.Options) (io.Reader, string, error) {
@@ -112,25 +104,25 @@ func (c *Client) ProxyAPI(
 
 	defer res.Body.Close()
 
+	resHeaders := make(http.Header)
+
 	// transfer response headers
 	for k, vv := range res.Header {
 		for _, h := range opt.TransferResponseHeaders {
 			if k == h {
-				for _, v := range vv {
-					writer.Header().Add(k, v)
-				}
-				break
+				headerValue := make([]string, len(vv))
+				copy(headerValue, vv)
+				resHeaders[k] = headerValue
 			}
 		}
 	}
 
-	// write status code
-	writer.WriteHeader(res.StatusCode)
-
 	resContentEncoding := res.Header.Get("Content-Encoding")
 
+	var resBody io.Reader
+
 	if opt.ResponseJSONInterceptor != nil {
-		var m interface{}
+		var obj interface{}
 
 		var reader io.Reader
 		switch resContentEncoding {
@@ -144,95 +136,90 @@ func (c *Client) ProxyAPI(
 			reader = res.Body
 		}
 
-		if err := json.NewDecoder(reader).Decode(&m); err != nil {
+		if err := json.NewDecoder(reader).Decode(&obj); err != nil {
 			return err
 		}
 
-		m = opt.ResponseJSONInterceptor(m)
+		if newObj, err := opt.ResponseJSONInterceptor(obj); err != nil {
+			return err
+		} else {
+			obj = newObj
+		}
 
 		buf := new(bytes.Buffer)
-		if err := json.NewEncoder(buf).Encode(m); err != nil {
+		if err := json.NewEncoder(buf).Encode(obj); err != nil {
 			return err
 		}
 
-		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-		writer.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		resHeaders.Set("Content-Type", "application/json; charset=utf-8")
+		resHeaders.Set("Content-Length", strconv.Itoa(buf.Len()))
 
-		if _, err := writer.Write(buf.Bytes()); err != nil {
-			return err
+		resBody = buf
+	} else {
+		resHeaders.Set("Content-Type", res.Header.Get("Content-Type"))
+
+		if res.ContentLength >= 0 {
+			resHeaders.Set("Content-Length", strconv.FormatInt(res.ContentLength, 10))
+		}
+		if resContentEncoding != "" {
+			resHeaders.Set("Content-Encoding", resContentEncoding)
 		}
 
-		return nil
+		resBody = res.Body
 	}
 
-	writer.Header().Set("Content-Type", res.Header.Get("Content-Type"))
-
-	if resContentLength := res.Header.Get("Content-Length"); resContentLength != "" {
-		writer.Header().Set("Content-Length", resContentLength)
+	for k, vv := range resHeaders {
+		for _, v := range vv {
+			resWriter.Header().Set(k, v)
+		}
 	}
 
-	if resContentEncoding != "" {
-		writer.Header().Set("Content-Encoding", resContentEncoding)
-	}
+	// write status code
+	resWriter.WriteHeader(res.StatusCode)
 
 	// copy response
-	_, err = io.Copy(writer, res.Body)
-	return err
+	if _, err := io.Copy(resWriter, resBody); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (c *Client) ProxyJSONAPI(
-	method, path string,
+func (c *Client) TransparentProxyAPI(httpReq *http.Request, resWriter http.ResponseWriter, requestType proxy.RequestBodyType) error {
+	return c.ProxyAPI("", "", httpReq, resWriter, requestType)
+}
+
+func (c *Client) ProxyGetAPI(
+	path string,
 	httpReq *http.Request,
-	writer http.ResponseWriter,
+	resWriter http.ResponseWriter,
 	opts ...proxy.Option,
 ) error {
-	return c.ProxyAPI(method, path, httpReq, writer, ProxyRequestTypeRaw, opts...)
+	return c.ProxyAPI("GET", path, httpReq, resWriter, proxy.RequestBodyTypeNone, opts...)
 }
 
-func (c *Client) TransparentProxyJSONAPI(httpReq *http.Request, writer http.ResponseWriter) error {
-	return c.ProxyJSONAPI("", "", httpReq, writer)
-}
-
-func (c *Client) ProxyFormAPI(
-	method, path string,
-	httpReq *http.Request,
-	writer http.ResponseWriter,
-	opts ...proxy.Option,
-) error {
-	return c.ProxyAPI(method, path, httpReq, writer, ProxyRequestTypeForm, opts...)
-}
-
-func (c *Client) TransparentProxyFormAPI(httpReq *http.Request, writer http.ResponseWriter) error {
-	return c.ProxyAPI("", "", httpReq, writer, ProxyRequestTypeForm)
-}
-
-func (c *Client) ProxyMultipartFormAPI(
-	method, path string,
-	httpReq *http.Request,
-	writer http.ResponseWriter,
-	opts ...proxy.Option,
-) error {
-	return c.ProxyAPI(method, path, httpReq, writer, ProxyRequestTypeMultipartForm, opts...)
-}
-
-func (c *Client) TransparentProxyMultipartFormAPI(httpReq *http.Request, writer http.ResponseWriter) error {
-	return c.ProxyAPI("", "", httpReq, writer, ProxyRequestTypeMultipartForm)
+func (c *Client) TransparentProxyGetAPI(httpReq *http.Request, resWriter http.ResponseWriter) error {
+	return c.ProxyGetAPI("", httpReq, resWriter)
 }
 
 func parseRawRequest(req *http.Request, opt *proxy.Options) (io.Reader, string, error) {
 	if opt.RequestJSONInterceptor != nil {
 		defer req.Body.Close()
 
-		var m interface{}
+		var obj interface{}
 
-		if err := json.NewDecoder(req.Body).Decode(&m); err != nil {
+		if err := json.NewDecoder(req.Body).Decode(&obj); err != nil {
 			return nil, "", err
 		}
 
-		m = opt.RequestJSONInterceptor(m)
+		if newObj, err := opt.RequestJSONInterceptor(obj); err != nil {
+			return nil, "", err
+		} else {
+			obj = newObj
+		}
 
 		buf := new(bytes.Buffer)
-		if err := json.NewEncoder(buf).Encode(m); err != nil {
+		if err := json.NewEncoder(buf).Encode(obj); err != nil {
 			return nil, "", err
 		}
 
@@ -260,7 +247,11 @@ func parseFormRequest(req *http.Request, opt *proxy.Options) (io.Reader, string,
 	}
 
 	if opt.RequestFormInterceptor != nil {
-		form = opt.RequestFormInterceptor(form)
+		if newForm, err := opt.RequestFormInterceptor(form); err != nil {
+			return nil, "", err
+		} else {
+			form = newForm
+		}
 	}
 
 	contentType := req.Header.Get("Content-Type")
@@ -308,7 +299,9 @@ func parseMultipartFormRequest(req *http.Request, opt *proxy.Options) (io.Reader
 	}
 
 	if opt.RequestMultipartFormInterceptor != nil {
-		opt.RequestMultipartFormInterceptor(multiWriter)
+		if err := opt.RequestMultipartFormInterceptor(multiWriter); err != nil {
+			return nil, "", err
+		}
 	}
 
 	return reqBody, multiWriter.FormDataContentType(), nil

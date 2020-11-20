@@ -1,8 +1,9 @@
 package proxy
 
 import (
-	"github.com/operaads/api-client/interceptor"
 	"time"
+
+	"github.com/operaads/api-client/interceptor"
 )
 
 type Options struct {
