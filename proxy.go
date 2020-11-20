@@ -107,13 +107,11 @@ func (c *Client) ProxyAPI(
 	resHeaders := make(http.Header)
 
 	// transfer response headers
-	for k, vv := range res.Header {
-		for _, h := range opt.TransferResponseHeaders {
-			if k == h {
-				headerValue := make([]string, len(vv))
-				copy(headerValue, vv)
-				resHeaders[k] = headerValue
-			}
+	for _, h := range opt.TransferResponseHeaders {
+		if vv := res.Header.Values(h); vv != nil {
+			headerValue := make([]string, len(vv))
+			copy(headerValue, vv)
+			resHeaders[h] = headerValue
 		}
 	}
 
@@ -169,9 +167,7 @@ func (c *Client) ProxyAPI(
 	}
 
 	for k, vv := range resHeaders {
-		for _, v := range vv {
-			resWriter.Header().Set(k, v)
-		}
+		resWriter.Header()[k] = vv
 	}
 
 	// write status code
