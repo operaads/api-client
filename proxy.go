@@ -107,7 +107,7 @@ func (c *Client) ProxyAPI(
 
 		// transfer response headers
 		for _, h := range opt.TransferResponseHeaders {
-			if vv := res.Header.Values(h); vv != nil {
+			if vv, ok := res.Header[h]; ok {
 				headerValue := make([]string, len(vv))
 				copy(headerValue, vv)
 
@@ -124,13 +124,12 @@ func (c *Client) ProxyAPI(
 
 	// transfer response headers
 	for _, h := range opt.TransferResponseHeaders {
-		if vv := res.Header.Values(h); vv != nil {
+		if vv, ok := res.Header[h]; ok {
 			headerValue := make([]string, len(vv))
 			copy(headerValue, vv)
 			resHeaders[h] = headerValue
 		}
 	}
-
 
 	var resBody io.Reader
 
